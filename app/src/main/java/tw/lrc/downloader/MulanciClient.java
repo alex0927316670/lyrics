@@ -72,9 +72,34 @@ public class MulanciClient {
 
     public interface Cancel { boolean isCancelled(); }
 
+    /** 取得網頁的方式（Android 上用 WebView，避開 Cloudflare 對非瀏覽器的封鎖）。 */
+    public interface Fetcher { Page fetch(String url) throws IOException; }
+
+    public static class Page {
+        public final int status;
+        public final String body;
+        public Page(int status, String body) { this.status = status; this.body = body; }
+    }
+
+    /** 直接用 HttpURLConnection（測試用；mulanci.org 的 Cloudflare 可能回 403）。 */
+    public static final Fetcher DIRECT = url -> {
+        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+        c.setConnectTimeout(20_000);
+        c.setReadTimeout(30_000);
+        c.setRequestProperty("User-Agent", UA);
+        c.setRequestProperty("Accept-Language", "zh-TW,zh;q=0.9");
+        try {
+            int code = c.getResponseCode();
+            return new Page(code, code == 200 ? readAll(c.getInputStream()) : "");
+        } finally {
+            c.disconnect();
+        }
+    };
+
     private final File cacheDir;
     private final Log log;
     private Cancel cancel = () -> false;
+    private Fetcher fetcher = DIRECT;
     private long minIntervalMs = 1500;
     private long lastRequestAt = 0;
 
@@ -87,6 +112,7 @@ public class MulanciClient {
     }
 
     public void setCancel(Cancel c) { this.cancel = c; }
+    public void setFetcher(Fetcher f) { this.fetcher = f; }
     public void setMinIntervalMs(long ms) { this.minIntervalMs = ms; }
 
     // ------------------------------------------------------------------ HTTP
@@ -96,25 +122,17 @@ public class MulanciClient {
         for (int attempt = 0; ; attempt++) {
             checkCancel();
             throttle();
-            HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
-            c.setConnectTimeout(20_000);
-            c.setReadTimeout(30_000);
-            c.setRequestProperty("User-Agent", UA);
-            c.setRequestProperty("Accept-Language", "zh-TW,zh;q=0.9");
-            try {
-                int code = c.getResponseCode();
-                if (code == 429 || code == 503) {
-                    if (attempt >= backoff.length) throw new IOException("網站一直回 HTTP " + code + "（流量限制）");
-                    log.log("　⏳ 網站流量限制 (HTTP " + code + ")，等待 " + backoff[attempt] / 1000 + " 秒後重試…");
-                    sleep(backoff[attempt]);
-                    continue;
-                }
-                if (code == 404) return null;
-                if (code != 200) throw new IOException("HTTP " + code + " " + url);
-                return readAll(c.getInputStream());
-            } finally {
-                c.disconnect();
+            Page p = fetcher.fetch(url);
+            int code = p.status;
+            if (code == 429 || code == 503) {
+                if (attempt >= backoff.length) throw new IOException("網站一直回 HTTP " + code + "（流量限制）");
+                log.log("　⏳ 網站流量限制 (HTTP " + code + ")，等待 " + backoff[attempt] / 1000 + " 秒後重試…");
+                sleep(backoff[attempt]);
+                continue;
             }
+            if (code == 404) return null;
+            if (code != 200) throw new IOException("HTTP " + code + " " + url);
+            return p.body;
         }
     }
 
@@ -190,10 +208,18 @@ public class MulanciClient {
         String langName = lang.equals("t") ? "繁體" : "簡體";
         log.log("📥 第一次使用：下載木蘭詞" + langName + "歌手索引（約 81 頁，需幾分鐘，之後會快取 30 天）");
         Map<String, Artist> byId = new java.util.LinkedHashMap<>();
-        int total = CATEGORIES.length * LETTERS.length, done = 0;
+        int total = CATEGORIES.length * LETTERS.length, done = 0, failures = 0;
         for (String cat : CATEGORIES) {
             for (String letter : LETTERS) {
-                String html = get(BASE + "/zh" + (lang.equals("t") ? "t" : "s") + "/artists/" + cat + "-" + letter + "/");
+                String html;
+                try {
+                    html = get(BASE + "/zh" + (lang.equals("t") ? "t" : "s") + "/artists/" + cat + "-" + letter + "/");
+                } catch (IOException e) {
+                    failures++;
+                    log.log("　索引頁 " + cat + "-" + letter + " 失敗：" + e.getMessage());
+                    if (failures >= 5) throw new IOException("歌手索引下載失敗：" + e.getMessage());
+                    html = null;
+                }
                 done++;
                 if (html != null) {
                     for (Artist a : parseArtistIndex(html, lang)) byId.put(a.id, a);

@@ -20,6 +20,8 @@
 
 ## 注意事項
 
+- 木蘭詞有 Cloudflare 防護，APP 透過手機內建的瀏覽器核心 (WebView) 讀網頁；若跳出「確認您是人類」驗證，畫面會顯示網頁，請點一下完成驗證，之後自動繼續。
+
 - **第一次執行**會先下載木蘭詞的歌手索引（約 81 頁，約 2–3 分鐘），之後快取 30 天；「更新歌手索引」可強制重抓。
 - 木蘭詞有流量限制（太快會回 HTTP 429）。程式每次請求間隔 1.5 秒，遇到限制會自動等待重試，所以**每首歌約需 3–5 秒**，數百首請耐心等。
 - 執行期間螢幕會保持常亮；請讓 APP 留在前景，切走可能被系統暫停。
@@ -42,4 +44,5 @@
 |---|---|
 | `app/src/main/java/tw/lrc/downloader/MainActivity.java` | 介面、資料夾選擇 (Storage Access Framework)、掃描 mp3、寫入 .lrc |
 | `app/src/main/java/tw/lrc/downloader/MulanciClient.java` | 木蘭詞索引／歌曲比對／LRC 擷取、限速與 429 重試（純 Java） |
+| `app/src/main/java/tw/lrc/downloader/WebFetcher.java` | 用 WebView 讀取網頁、處理 Cloudflare 人機驗證 |
 | `.github/workflows/build-apk.yml` | GitHub Actions 自動編譯並發佈到 Releases |

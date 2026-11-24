@@ -20,6 +20,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.webkit.WebView;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.LinearLayout;
@@ -46,6 +47,8 @@ public class MainActivity extends Activity {
     private CheckBox overwriteBox, subdirBox, bomBox;
     private ProgressBar progress;
     private ScrollView logScroll;
+    private WebView webView;
+    private WebFetcher webFetcher;
 
     private final Handler ui = new Handler(Looper.getMainLooper());
     private volatile boolean running = false;
@@ -113,6 +116,18 @@ public class MainActivity extends Activity {
         statusView = new TextView(this);
         statusView.setTextSize(13);
         root.addView(statusView, matchWrap());
+
+        // 用來抓木蘭詞網頁的瀏覽器核心；平常幾乎看不見，遇到人機驗證時才展開
+        webView = new WebView(this);
+        root.addView(webView, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1));
+        webFetcher = new WebFetcher(webView, new WebFetcher.UiListener() {
+            @Override public void showWebView(boolean show) {
+                ViewGroup.LayoutParams lp = webView.getLayoutParams();
+                lp.height = show ? dp(420) : 1;
+                webView.setLayoutParams(lp);
+            }
+            @Override public void log(String msg) { MainActivity.this.log(msg, Color.rgb(160, 0, 160)); }
+        });
 
         logScroll = new ScrollView(this);
         logView = new TextView(this);
@@ -250,6 +265,20 @@ public class MainActivity extends Activity {
 
         MulanciClient client = new MulanciClient(getFilesDir(), msg -> log(msg, Color.DKGRAY));
         client.setCancel(() -> cancelled);
+        webFetcher.setCancel(() -> cancelled);
+        client.setFetcher(webFetcher);
+
+        // 先準備好歌手索引；失敗就整批停止，不要每首歌都重試
+        try {
+            client.getIndex("t");
+        } catch (MulanciClient.CancelledException e) {
+            throw e;
+        } catch (Exception e) {
+            log("❌ 無法取得木蘭詞歌手索引，已停止：" + e.getMessage(), Color.RED);
+            return;
+        }
+        log("🔎 開始逐首查詢（網站限速，每首約 3–5 秒；" + files.size() + " 首預估約 "
+                + Math.max(1, files.size() * 4 / 60) + " 分鐘）", Color.DKGRAY);
 
         int ok = 0, skipped = 0, fail = 0, i = 0;
         List<String> failed = new ArrayList<>();
@@ -432,6 +461,13 @@ public class MainActivity extends Activity {
             logView.setText(logText);
             logScroll.post(() -> logScroll.fullScroll(View.FOCUS_DOWN));
         });
+    }
+
+    @Override
+    protected void onDestroy() {
+        cancelled = true;
+        if (webView != null) webView.destroy();
+        super.onDestroy();
     }
 
     private int dp(int v) { return Math.round(v * getResources().getDisplayMetrics().density); }
