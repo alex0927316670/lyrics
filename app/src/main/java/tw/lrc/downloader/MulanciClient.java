@@ -430,14 +430,20 @@ public class MulanciClient {
             List<Artist> artists = findArtists(artist, lang);
             if (artists.isEmpty()) continue;
             for (Artist a : artists) {
-                List<Song> cands = matchSongs(getArtistSongs(a), title, 4);
+                List<Song> cands = matchSongs(getArtistSongs(a), title, 20);
                 if (cands.isEmpty()) {
                     if (best == null) best = new Result(Status.NO_SONG, "歌手「" + a.name + "」的歌曲清單裡找不到「" + title + "」");
                     continue;
                 }
+                if (cands.size() > 1)
+                    log.log("　找到 " + cands.size() + " 個版本，逐一檢查哪個有動態歌詞…");
+                int k = 0;
                 for (Song s : cands) {
+                    k++;
                     String url = BASE + "/lyric/" + a.lang + "l" + s.id + "/";
                     String lrc = extractLrc(get(url));
+                    if (lrc == null && cands.size() > 1)
+                        log.log("　(" + k + "/" + cands.size() + ") " + s.title + "：只有純文字");
                     if (lrc != null) {
                         Result r = new Result(Status.OK, a.name + " - " + s.title);
                         r.lrc = withHeader(lrc, s.title, a.name);
@@ -445,7 +451,8 @@ public class MulanciClient {
                         return r;
                     }
                     if (best == null || best.status != Status.NO_LRC) {
-                        best = new Result(Status.NO_LRC, "找到「" + a.name + " - " + s.title + "」但網站沒有動態歌詞");
+                        best = new Result(Status.NO_LRC, "找到「" + a.name + " - " + title + "」共 " + cands.size()
+                                + " 個版本，但都沒有動態歌詞");
                         best.url = url;
                     }
                 }

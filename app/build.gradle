@@ -10,8 +10,8 @@ android {
         applicationId 'tw.lrc.downloader'
         minSdk 24
         targetSdk 35
-        versionCode 5
-        versionName '2.2'
+        versionCode 6
+        versionName '2.3'
     }
 
     // 固定簽章：每次 GitHub 編譯出的新版都能直接覆蓋安裝（不用先移除舊版）
