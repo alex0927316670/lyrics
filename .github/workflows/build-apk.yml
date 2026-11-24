@@ -1,0 +1,41 @@
+name: Build APK
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Build APK
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
+          cp app/build/outputs/apk/release/app-release.apk LrcDownloader.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LrcDownloader-apk
+          path: LrcDownloader.apk
+
+      - name: Publish to Releases (latest)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: MP3 動態歌詞 (最新版)
+          body: 直接在手機上點 LrcDownloader.apk 下載安裝。
+          files: LrcDownloader.apk
+          make_latest: true
