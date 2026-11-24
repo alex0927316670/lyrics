@@ -165,6 +165,18 @@ public class MainActivity extends Activity {
         client = new MulanciClient(getFilesDir(), msg -> log(msg, Color.DKGRAY));
         client.setCancel(() -> cancelled);
         client.setFetcher(webFetcher);
+        // 歌手索引來源：① mp3 資料夾裡的 artists_t.tsv / artists_s.tsv ② APP 內建
+        client.setBuiltinIndex(lang -> {
+            String name = "artists_" + lang + ".tsv";
+            if (treeUri != null) {
+                Uri f = findChild(getContentResolver(), DocumentsContract.getTreeDocumentId(treeUri), name);
+                if (f != null) {
+                    java.io.InputStream in = getContentResolver().openInputStream(f);
+                    if (in != null) return in;
+                }
+            }
+            return getAssets().open(name);
+        });
 
         logScroll = new ScrollView(this);
         logView = new TextView(this);
@@ -177,12 +189,9 @@ public class MainActivity extends Activity {
         root.addView(logScroll, lp);
 
         reindexBtn = new Button(this);
-        reindexBtn.setText("更新木蘭詞歌手索引");
+        reindexBtn.setText("🔄 更新歌手索引（找不到歌手時再按）");
         reindexBtn.setTextSize(12);
-        reindexBtn.setOnClickListener(v -> {
-            client.clearIndexCache();
-            Toast.makeText(this, "已清除歌手索引，下次抓歌詞時會重新下載", Toast.LENGTH_SHORT).show();
-        });
+        reindexBtn.setOnClickListener(v -> { if (running) cancel(); else rebuildIndex(); });
         root.addView(reindexBtn, matchWrap());
 
         setContentView(root);
@@ -199,8 +208,19 @@ public class MainActivity extends Activity {
             }
         }
         updatePath();
+        statusView.setText("歌手索引：" + client.indexInfo());
         log("使用說明：\n① 輸入「歌手 - 歌名」（可含 .mp3），按抓歌詞。找到同名 mp3 會把 .lrc 放在它旁邊，否則放在選擇的資料夾。"
                 + "\n② 匯出清單會在選擇的資料夾產生 CSV（可用 Excel 開），並可分享到電腦。\n", Color.GRAY);
+    }
+
+    private void rebuildIndex() {
+        runJob(reindexBtn, "■ 停止更新索引", () -> {
+            log("────────────\n🔄 重新下載木蘭詞歌手索引（繁體＋簡體共 162 頁，約 5 分鐘）", Color.BLACK);
+            setStatus("更新歌手索引中…", true);
+            int n = client.rebuildIndex();
+            log("✅ 歌手索引已更新（共 " + n + " 筆），之後都使用這份", Color.rgb(0, 128, 0));
+            setStatus("歌手索引：" + client.indexInfo(), false);
+        }, false);
     }
 
     private TextView section(String title) {
@@ -254,8 +274,10 @@ public class MainActivity extends Activity {
 
     private interface Job { void run() throws Exception; }
 
-    private void runJob(Button activeBtn, String stopText, Job job) {
-        if (treeUri == null || running) return;
+    private void runJob(Button activeBtn, String stopText, Job job) { runJob(activeBtn, stopText, job, true); }
+
+    private void runJob(Button activeBtn, String stopText, Job job, boolean requireFolder) {
+        if ((requireFolder && treeUri == null) || running) return;
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                 .putBoolean("subdir", subdirBox.isChecked())
                 .putBoolean("tags", tagBox.isChecked())
@@ -288,7 +310,7 @@ public class MainActivity extends Activity {
 
     private void setControls(boolean idle, Button active) {
         pickBtn.setEnabled(idle);
-        reindexBtn.setEnabled(idle);
+        reindexBtn.setEnabled(idle || reindexBtn == active);
         subdirBox.setEnabled(idle);
         tagBox.setEnabled(idle);
         nameInput.setEnabled(idle);

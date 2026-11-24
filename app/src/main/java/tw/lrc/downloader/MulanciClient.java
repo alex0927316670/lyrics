@@ -40,7 +40,6 @@ public class MulanciClient {
     private static final String[] CATEGORIES = {"male", "female", "group"};
     private static final String[] LETTERS = {"popular", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
             "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z"};
-    private static final long INDEX_MAX_AGE_MS = 30L * 24 * 3600 * 1000;
 
     public interface Log { void log(String msg); }
 
@@ -100,7 +99,7 @@ public class MulanciClient {
     private final Log log;
     private Cancel cancel = () -> false;
     private Fetcher fetcher = DIRECT;
-    private long minIntervalMs = 1500;
+    private long minIntervalMs = 1000;
     private long lastRequestAt = 0;
 
     private final Map<String, List<Artist>> indexByLang = new HashMap<>();
@@ -184,36 +183,68 @@ public class MulanciClient {
         return list;
     }
 
-    public void clearIndexCache() {
-        indexByLang.clear();
-        for (String lang : new String[]{"t", "s"}) {
-            File f = new File(cacheDir, "artists_" + lang + ".tsv");
-            if (f.exists()) //noinspection ResultOfMethodCallIgnored
-                f.delete();
-        }
+    /** 內建索引來源（Android：APK 內的 assets/artists_t.tsv、artists_s.tsv）。 */
+    public interface BuiltinIndex { InputStream open(String lang) throws IOException; }
+
+    private BuiltinIndex builtin;
+    public void setBuiltinIndex(BuiltinIndex b) { this.builtin = b; }
+
+    private File indexFile(String lang) { return new File(cacheDir, "artists_" + lang + ".tsv"); }
+
+    /** 目前索引的來源說明（顯示用）。 */
+    public String indexInfo() {
+        File f = indexFile("t");
+        if (f.exists()) return "手動更新於 " + new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.TAIWAN)
+                .format(new java.util.Date(f.lastModified()));
+        return "APP 內建";
     }
 
-    /** 取得歌手索引（快取 30 天）。lang: "t" 繁體 / "s" 簡體。 */
+    /**
+     * 取得歌手索引。順序：記憶體 → 手動更新下載的檔案 → APP 內建 → (都沒有才) 線上下載。
+     * 不會自動過期；只有使用者按「更新歌手索引」才會重新下載。lang: "t" 繁體 / "s" 簡體。
+     */
     public List<Artist> getIndex(String lang) throws IOException {
         List<Artist> cached = indexByLang.get(lang);
         if (cached != null) return cached;
-        File f = new File(cacheDir, "artists_" + lang + ".tsv");
-        if (f.exists() && System.currentTimeMillis() - f.lastModified() < INDEX_MAX_AGE_MS) {
-            List<Artist> list = loadIndex(f);
-            if (list.size() > 100) {
-                indexByLang.put(lang, list);
-                return list;
-            }
+        File f = indexFile(lang);
+        if (f.exists()) {
+            List<Artist> list;
+            try (InputStream in = new FileInputStream(f)) { list = loadIndex(in); }
+            if (list.size() > 100) { indexByLang.put(lang, list); return list; }
         }
+        if (builtin != null) {
+            try (InputStream in = builtin.open(lang)) {
+                List<Artist> list = loadIndex(in);
+                if (list.size() > 100) {
+                    // 複製一份到 APP 內部，之後不必再讀資料夾
+                    try { saveIndex(f, list); } catch (IOException ignored) { }
+                    log.log("📚 已載入" + (lang.equals("t") ? "繁體" : "簡體") + "歌手索引（" + list.size() + " 位歌手）");
+                    indexByLang.put(lang, list);
+                    return list;
+                }
+            } catch (IOException ignored) { }
+        }
+        return downloadIndex(lang);
+    }
+
+    /** 手動更新：重新下載繁體與簡體歌手索引並存檔（之後優先使用）。 */
+    public int rebuildIndex() throws IOException {
+        int n = 0;
+        for (String lang : new String[]{"t", "s"}) n += downloadIndex(lang).size();
+        artistSongsCache.clear();
+        return n;
+    }
+
+    private List<Artist> downloadIndex(String lang) throws IOException {
         String langName = lang.equals("t") ? "繁體" : "簡體";
-        log.log("📥 第一次使用：下載木蘭詞" + langName + "歌手索引（約 81 頁，需幾分鐘，之後會快取 30 天）");
+        log.log("📥 下載木蘭詞" + langName + "歌手索引（81 頁，約 2–3 分鐘）");
         Map<String, Artist> byId = new java.util.LinkedHashMap<>();
         int total = CATEGORIES.length * LETTERS.length, done = 0, failures = 0;
         for (String cat : CATEGORIES) {
             for (String letter : LETTERS) {
                 String html;
                 try {
-                    html = get(BASE + "/zh" + (lang.equals("t") ? "t" : "s") + "/artists/" + cat + "-" + letter + "/");
+                    html = get(BASE + "/zh" + lang + "/artists/" + cat + "-" + letter + "/");
                 } catch (IOException e) {
                     failures++;
                     log.log("　索引頁 " + cat + "-" + letter + " 失敗：" + e.getMessage());
@@ -225,20 +256,23 @@ public class MulanciClient {
                     for (Artist a : parseArtistIndex(html, lang)) byId.put(a.id, a);
                 }
                 if (done % 9 == 0 || done == total)
-                    log.log("　索引進度 " + done + "/" + total + "，已收錄 " + byId.size() + " 位歌手");
+                    log.log("　" + langName + "索引進度 " + done + "/" + total + "，已收錄 " + byId.size() + " 位歌手");
             }
         }
+        if (byId.size() < 100) throw new IOException("歌手索引內容異常（只有 " + byId.size() + " 位）");
         List<Artist> list = new ArrayList<>(byId.values());
-        saveIndex(f, list);
+        saveIndex(indexFile(lang), list);
         indexByLang.put(lang, list);
         return list;
     }
 
-    private static List<Artist> loadIndex(File f) throws IOException {
+    private static List<Artist> loadIndex(InputStream in) throws IOException {
         List<Artist> list = new ArrayList<>();
-        try (BufferedReader r = new BufferedReader(new InputStreamReader(new FileInputStream(f), StandardCharsets.UTF_8))) {
+        try (BufferedReader r = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
             String line;
             while ((line = r.readLine()) != null) {
+                if (line.startsWith("\uFEFF")) line = line.substring(1);
+                line = line.replace("\r", "");
                 String[] p = line.split("\t", -1);
                 if (p.length >= 4) list.add(new Artist(p[0], p[1], p[2], p[3]));
             }
@@ -419,7 +453,8 @@ public class MulanciClient {
             // 已找到歌曲（有/無動態歌詞）就不必再查另一語系；找不到歌名時再試簡體（檔名可能是簡體字）
             if (best != null && best.status != Status.NO_SONG) return best;
         }
-        return best != null ? best : new Result(Status.NO_ARTIST, "木蘭詞找不到歌手「" + artist + "」");
+        return best != null ? best : new Result(Status.NO_ARTIST, "歌手索引裡沒有「" + artist
+                + "」（若是新歌手，可按「更新歌手索引」後再試）");
     }
 
     private static String withHeader(String lrc, String title, String artist) {
