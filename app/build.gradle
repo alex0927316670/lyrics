@@ -10,15 +10,24 @@ android {
         applicationId 'tw.lrc.downloader'
         minSdk 24
         targetSdk 35
-        versionCode 3
-        versionName '2.0'
+        versionCode 4
+        versionName '2.1'
+    }
+
+    // 固定簽章：每次 GitHub 編譯出的新版都能直接覆蓋安裝（不用先移除舊版）
+    signingConfigs {
+        fixed {
+            storeFile file('release.keystore')
+            storePassword 'lrc123456'
+            keyAlias 'lrc'
+            keyPassword 'lrc123456'
+        }
     }
 
     buildTypes {
         release {
             minifyEnabled false
-            // 沒有正式簽章時，release 也用 debug 金鑰簽，方便直接安裝
-            signingConfig signingConfigs.debug
+            signingConfig signingConfigs.fixed
         }
     }
 

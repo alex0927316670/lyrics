@@ -237,11 +237,8 @@ public class MainActivity extends Activity {
 
     private void updatePath() {
         boolean has = treeUri != null;
-        pathView.setText(has ? "📂 " + prettyPath(treeUri) : "尚未選擇資料夾");
-        if (!running) {
-            fetchBtn.setEnabled(has);
-            exportBtn.setEnabled(has);
-        }
+        pathView.setText(has ? "📂 " + prettyPath(treeUri) : "⚠ 尚未選擇資料夾（請先按上方按鈕選擇）");
+        pathView.setTextColor(has ? Color.BLACK : Color.RED);
     }
 
     private static String prettyPath(Uri tree) {
@@ -290,14 +287,13 @@ public class MainActivity extends Activity {
     private void cancel() { cancelled = true; }
 
     private void setControls(boolean idle, Button active) {
-        boolean has = treeUri != null;
         pickBtn.setEnabled(idle);
         reindexBtn.setEnabled(idle);
         subdirBox.setEnabled(idle);
         tagBox.setEnabled(idle);
         nameInput.setEnabled(idle);
-        fetchBtn.setEnabled(idle ? has : fetchBtn == active);
-        exportBtn.setEnabled(idle ? has : exportBtn == active);
+        fetchBtn.setEnabled(idle || fetchBtn == active);
+        exportBtn.setEnabled(idle || exportBtn == active);
         shareBtn.setEnabled(idle && lastExport != null);
     }
 
@@ -308,7 +304,15 @@ public class MainActivity extends Activity {
 
     // ================================================================== ① 手動抓單首
 
+    private boolean needFolder() {
+        if (treeUri != null) return false;
+        Toast.makeText(this, "請先選擇 MP3 資料夾", Toast.LENGTH_LONG).show();
+        pickFolder();
+        return true;
+    }
+
     private void fetchOne() {
+        if (needFolder()) return;
         final String input = nameInput.getText().toString().trim();
         if (input.isEmpty()) {
             Toast.makeText(this, "請先輸入檔名，例如：蔡依林 - 聽說愛情回來過", Toast.LENGTH_SHORT).show();
@@ -419,6 +423,7 @@ public class MainActivity extends Activity {
     // ================================================================== ② 匯出清單
 
     private void exportList() {
+        if (needFolder()) return;
         final boolean subdirs = subdirBox.isChecked(), tags = tagBox.isChecked();
         runJob(exportBtn, "■ 停止", () -> {
             log("────────────\n📄 掃描 " + prettyPath(treeUri) + " …", Color.BLACK);
